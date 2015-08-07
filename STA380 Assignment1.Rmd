@@ -1,0 +1,711 @@
+---
+title: "Sta 380 HW1"
+output: html_document
+---
+```{r}
+library(mosaic)
+library(foreach)
+library(psych)
+library(plyr)
+```
+
+#Exploratory analysis 
+```{r}
+georgiaVotes = read.csv('../data/georgia2000.csv', header=TRUE)
+summary(georgiaVotes)
+attach(georgiaVotes)
+VoteDiscrepancy <- georgiaVotes$votes-georgiaVotes$ballots
+georgiaVotes <- data.frame(georgiaVotes,VoteDiscrepancy)
+percentDiscrepancy <- abs(georgiaVotes$VoteDiscrepancy/georgiaVotes$ballots)
+georgiaVotes <- data.frame(georgiaVotes,percentDiscrepancy)
+georgiaVotes$PoorPop=ifelse(georgiaVotes$poor >=1,"Yes","No")
+```
+
+## By equipment
+```{r}
+plot(georgiaVotes$equip,georgiaVotes$percentDiscrepancy)
+```
+
+- Looking at the graph the median values seem to be around the same by equipment and So I checked the summary statistics to try to confirm this. 
+
+```{r}
+lm.GV=lm(percentDiscrepancy ~ equip, data= georgiaVotes)
+```
+
+```{r}
+describeBy(georgiaVotes$percentDiscrepancy, georgiaVotes$equip, mat = TRUE)
+```
+
+- While the medians are all around the same, optical voting equipment seems to have a couple of  cases of  sizable discrepancy in votes and ballots. 
+
+## Poor counties
+- The following table illustrates equipment based on whether or not the population has 25% or more of the population 1.5 times below the poverty line. 
+```{r}
+t1 = xtabs(~ PoorPop + equip, data=georgiaVotes)
+t1 
+```
+
+- The poor areas had the only two paper voting machines, and roughly 60% of the lever ones. It had just over 25% of the optical machines but had the machines with the two worst voting discrepancies.
+
+
+```{r}
+xyplot(percentDiscrepancy ~ equip| PoorPop, data=georgiaVotes)
+
+```
+
+- Grouping the areas and checking out the summary statistics shows that the non poor ares were misvoted by around 3.5 percent on average while the poorer areas were roughly 5.5%. However the standard deviation of the poor areas was nearly 3% so there likely is nothing significant about the findings. Rather than there being a bias with machines, it could just be that the poorer areas are generally less educated so perhaps they didn't understand the instructions?
+
+```{r}
+describeBy(georgiaVotes$percentDiscrepancy, georgiaVotes$PoorPop, mat = TRUE)
+``` 
+
+## Minority Voting discrepancy
+```{r}
+plot(georgiaVotes$perAA,georgiaVotes$percentDiscrepancy,xlab='Percent African Americans',ylab='Voting Discrepancy percentage')
+```
+
+- Looking at the  graph above, the voting discrepancy numbers seem to be pretty much all over the place. But I wonder how it would break down if sorted by poor areas vs non-poor?
+
+```{r}
+xyplot(percentDiscrepancy ~ perAA| PoorPop, data=georgiaVotes)
+```
+
+- It appears many of the non-poor areas have fewer than 20% African Americans, while the poor areas seem to have greater than 20%. The biggest case of voting discrepancy however is an area with 20% of the population being African American.
+-In order to dig deeper into whether or not there is anything significant going on, I'll sort the counties into two categories( below or above the median perAA value of .2330).
+
+```{r}
+summary(georgiaVotes$perAA)
+AAMedian <- ifelse(georgiaVotes$perAA >=.2330,"Above","Below")
+georgiaVotes <- data.frame(georgiaVotes,AAMedian)
+plot(georgiaVotes$AAMedian,georgiaVotes$percentDiscrepancy)
+```
+
+- Again it does not look like anything too suspicious is going on here and the  statistics of both groups seem to confirm this.
+
+```{r}
+describeBy(georgiaVotes$percentDiscrepancy, georgiaVotes$AAMedian, mat = TRUE)
+```
+- However I'll dig a bit deeper and check out if there is anything odd in the top quartile of African American percentage which is at least .3480.
+
+```{r}
+AA3Q <- ifelse(georgiaVotes$perAA >=.3480,"Above","Below")
+georgiaVotes <- data.frame(georgiaVotes,AA3Q)
+plot(georgiaVotes$AA3Q,georgiaVotes$percentDiscrepancy,xlab='Above or below 3Q AA%',ylab='Voting Discrepancy percentage')
+```
+- Interestingly enough, the median voter discrepancy is noticebly bigger in the third quartile than the rest of the counties. However the biggest discrepencies actually occurred in the counties with African American populations between the median and third quartile.
+
+```{r}
+par(mfrow=c(1,2))
+plot(georgiaVotes$AAMedian,georgiaVotes$percentDiscrepancy, main = "Median AA% vs. Voter Discrepancy")
+plot(georgiaVotes$AA3Q,georgiaVotes$percentDiscrepancy, main= " 3rdQ AA% vs. Voter Discrepancy")
+describeBy(georgiaVotes$percentDiscrepancy, georgiaVotes$AA3Q, mat = TRUE)
+```
+- While again the population below the third quarter is within a standard deviation of the other quarter, it is pretty interesting that the numbers appear to be consistently skewed against the poor and minorities. However it's hard to say that this is because of a malicious act rather than just a coincidence.
+
+#Boostrapping
+```{r}
+library(fImport)
+set.seed(10)
+
+myAssets <- c("LQD", "TLT", "SPY","EEM","VNQ")
+assetPrices <- yahooSeries(myAssets,from='2010-01-01', to='2015-07-30')
+
+head(assetPrices)
+
+summary(assetPrices)
+
+AssetPricesToReturns = function(series) {
+  mycols = grep('Adj.Close', colnames(series))
+  closingprice = series[,mycols]
+  N = nrow(closingprice)
+  percentreturn = as.data.frame(closingprice[2:N,]) / as.data.frame(closingprice[1:(N-1),]) - 1
+  mynames = strsplit(colnames(percentreturn), '.', fixed=TRUE)
+  mynames = lapply(mynames, function(x) return(paste0(x[1], ".PctReturn")))
+  colnames(percentreturn) = mynames
+  as.matrix(na.omit(percentreturn))
+}
+
+Assetreturns = AssetPricesToReturns(assetPrices)
+n_days=20
+
+```
+
+- In order to properly understand the risk/reward property of each asset I will run bootstrap simulations of 4 trading weeks for each asset. 
+- I will examine the 5% value at risk to determine the risk of each portfolio as well as look at the histograms to try to get the expected returns. 
+- With each asset I will invest 10000 and see it's sampled value after 20 days, the length of the bootstrap test that will ultimately been done on the three portfolios.
+- For each asset I will run 100 simulations to get an idea of the possible scenarios then compute the mean to determine expected return as well as standard deviation.
+
+##LQD 
+```{r}
+LQDSim = foreach(i=1:100, .combine='rbind') %do% {
+totalwealth = 10000
+weights = c(1, 0.0, 0.0, 0.0, 0.0)
+holdings = weights * totalwealth
+wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+for(today in 1:n_days) {
+return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+holdings = holdings + holdings*return.today
+totalwealth = sum(holdings)
+wealthtracker[today] = totalwealth
+}
+wealthtracker
+}
+
+head(LQDSim)
+par(mfrow=c(1,2))
+
+```
+
+```{r}
+hist(LQDSim[,n_days],25) #This shows the values at the 20th day
+```
+
+- It seems the most frequent occurence is within +/- $200 of $1,000
+
+###Checking for profits
+```{r}
+
+hist(LQDSim[,n_days]- 10000)
+
+mean(LQDSim[,n_days])-10000
+(mean(LQDSim[,n_days])-10000)/10000*100
+
+
+```
+- On average the LQD account return is $10,052.04  over 20 days or a return of  0.52%
+
+```{r}
+quantile(LQDSim[,n_days], 0.05) - 10000
+
+```
+- The 5% value at risk is 165.19 dollars.
+
+```{r}
+sd((LQDSim[,n_days])-10000)
+```
+- Meanwhile the standard deviation is $146.15
+
+##TLT
+```{r}
+TLTSim = foreach(i=1:100, .combine='rbind') %do% {
+totalwealth = 10000
+weights = c(0.0, 1.0, 0.0, 0.0, 0.0)
+holdings = weights * totalwealth
+wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+for(today in 1:n_days) {
+return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+holdings = holdings + holdings*return.today
+totalwealth = sum(holdings)
+wealthtracker[today] = totalwealth
+}
+wealthtracker
+}
+head(TLTSim)
+```
+
+```{r}
+hist(TLTSim[,n_days],25)
+```
+
+- It appears the most prevalent TLTSims are between +/- $500 of 10,000.
+
+### Checking for profits
+```{r}
+hist(TLTSim[,n_days]- 10000)
+mean(TLTSim[,n_days])-10000
+(mean(TLTSim[,n_days])-10000)/10000*100
+```
+- The average return is 10,105.37 for a $10,000 investment or 1.05%
+
+### Value at Risk
+```{r}
+quantile(TLTSim[,n_days], 0.05) - 10000
+
+
+```
+- The five percent value at risk is -506.41 dollars.
+
+```{r}
+sd(TLTSim[,n_days], 0.05 - 10000)
+```
+- The standard deviation is $405
+
+## SPY
+```{r}
+SPYSim = foreach(i=1:100, .combine='rbind') %do% {
+totalwealth = 10000
+weights = c(0, 0.0, 1.0, 0.0, 0.0)
+holdings = weights * totalwealth
+wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+for(today in 1:n_days) {
+return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+holdings = holdings + holdings*return.today
+totalwealth = sum(holdings)
+wealthtracker[today] = totalwealth
+}
+wealthtracker
+}
+
+head(SPYSim)
+
+```
+
+```{r}
+hist(SPYSim[,n_days],25)
+```
+
+- It appears the most prevalent SPYSims are between +/- $500 of 10,000.Though in some cases it's more around $600
+
+### Checking for profits
+```{r}
+hist(SPYSim[,n_days]- 10000)
+mean(SPYSim[,n_days])-10000
+(mean(SPYSim[,n_days])-10000)/10000*100
+```
+- The average return is 10,099.21 for a $10,000 investment or.9921%
+
+### Value at Risk
+```{r}
+quantile(SPYSim[,n_days], 0.05) - 10000
+
+```
+- The five percent value at risk is -814.92 dollars.
+
+```{r}
+sd((SPYSim[,n_days]) - 10000)
+```
+- The standard deviation is $466.86 
+
+##EEM
+```{r}
+EEMSim = foreach(i=1:100, .combine='rbind') %do% {
+  totalwealth = 10000
+  weights = c(0.0, 0.0, 0.0, 1.0, 0.0)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+  }
+  wealthtracker
+}
+head(EEMSim)
+```
+
+
+```{r}
+hist(EEMSim[,n_days],25)
+```
+
+- It appears the most prevalent EEMSims are between +/- $500 of 10,000, with the more common losing money.
+
+### Checking for profits
+```{r}
+hist(EEMSim[,n_days]- 10000,25)
+
+mean(EEMSim[,n_days])-10000
+(mean(EEMSim[,n_days])-10000)/10000*100
+```
+- The average return is $10,039.59 for a $10,000 investment or 0.3959%.
+
+### Value at Risk
+```{r}
+quantile(EEMSim[,n_days], 0.05) - 10000
+
+```
+- The five percent value at risk is -935.11 dollars.
+
+```{r}
+sd(EEMSim[,n_days])
+```
+- The standard deviation is $678.11
+
+## VNQ
+```{r}
+VNQSim = foreach(i=1:100, .combine='rbind') %do% {
+  totalwealth = 10000
+  weights = c(0, 0.0, 0.0, 0.0, 1.0)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+  }
+  wealthtracker
+}
+
+head(VNQSim)
+
+```
+
+```{r}
+hist(VNQSim[,n_days],20)
+```
+
+- It seems the most frequent occurence is within +/- $250 of $1,000
+
+###Checking for profits
+```{r}
+hist(VNQSim[,n_days]- 10000)
+
+mean(VNQSim[,n_days])-10000
+
+(mean(VNQSim[,n_days])-10000)/10000*100
+```
+- On average the VNQ account returned 10,060.36 dollars over 20 days or a return of  0.6036%
+
+```{r}
+quantile(VNQSim[,n_days], 0.05) - 10000
+
+```
+- The 5% value at risk is 936.83 dollars.
+
+```{r}
+sd(VNQSim[,n_days])
+```
+- The standard deviation is $570.07
+
+## Even Sim
+```{r}
+EvenSim = foreach(i=1:100, .combine='rbind') %do% {
+  totalwealth = 10000
+  weights = c(0.2, 0.2, 0.2, 0.2, 0.2)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+    weight= c(0.2,0.2,0.2,0.2,0.2)
+    holdings = weight*totalwealth
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+  }
+  wealthtracker
+}
+
+```
+
+### A histogram of the 20th day of the simulations
+```{r}
+hist(EvenSim[,n_days],25)
+```
+
+### Expected result
+```{r}
+mean(EvenSim[,n_days])
+```
+- Return is $10,047.08 or .4708% over the course of the two week traing period
+
+### Five percent at risk
+```{r}
+quantile(EvenSim[,n_days], 0.05)-10000
+```
+- The Five percent value at risk is $412.32
+
+## Weighting the options
+- Since the averages are only the mean, they don't indicate how potentially high an assets' return might be. So I will look at the max and third quartile of the five to decide what has the top return potential.
+```{r}
+quantile(LQDSim[,n_days], 0.75)-10000; max(LQDSim[,n_days])-10000
+```
+- 75% LQD = < 140.92. Max = 445.21
+
+```{r}
+quantile(TLTSim[,n_days], 0.75)-10000; max(TLTSim[,n_days])-10000
+```
+- 75% TLT = < 365.29  Max = 1,450.35
+
+```{r}
+quantile(SPYSim[,n_days], 0.75)-10000; max(SPYSim[,n_days])-10000
+```
+- 75% SPY = < 431.30  Max = 903.58
+
+```{r}
+quantile(EEMSim[,n_days], 0.75)-10000; max(EEMSim[,n_days])-10000
+```
+- 75% EEM = < 424.82  Max = 2,003.97
+
+```{r}
+quantile(VNQSim[,n_days], 0.75)-10000; max(VNQSim[,n_days])-10000
+```
+- 75% VNQ = < 480.49  Max = 1,235.43
+
+- "Aggresive" portfolio: I think the combination of EEM and VNQ makes sense. Both had higher SD than SPY, LQD or TLT, and have a higher third quartile value. I'm going with  50% VNQ and 50% EEM to try to put a higher percentage where there is bigger return potential
+- "Safe" portfolio:  TLT and LQD have the lowest SD and 5% value at risk, so I'm going to put 40% in each of them and 20% in SPY because of its lower value at risk and SD than the other three options.
+
+## "Aggressive" Portfolio
+```{r}
+Option2= foreach(i=1:100, .combine='rbind') %do% {
+  totalwealth = 10000
+  weights = c(0.0, 0.0, 0.0, 0.5, 0.5)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+    weight = c(.0, .0, 0.0, 0.5, 0.5)
+    holdings = weight*totalwealth
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+  }
+  wealthtracker
+}
+
+
+```
+
+### A histogram of the 20th day of the simulations
+```{r}
+hist(Option2[,n_days],25)
+```
+
+### Expected result
+```{r}
+mean(Option2[,n_days])
+```
+- The expected return for the aggressive porfolio is $10,039.24 for  a 10,000 investment over four trading weeks or 0.75%
+
+### Five Percent at risk
+```{r}
+quantile(Option2[,n_days], 0.05)-10000
+```
+- The Five percent value at risk is $745.19
+
+## Option 3: "Safe" portfolio
+```{r}
+Option3= foreach(i=1:100, .combine='rbind') %do% {
+  totalwealth = 10000
+  weights = c(0.4, 0.4, 0.2, 0.0, 0.0)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(Assetreturns, 1, orig.ids=FALSE)
+    weight = c(0.4, 0.4, 0.2, 0.0, 0.0)
+    holdings = weight*totalwealth
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+  }
+  wealthtracker
+}
+```
+
+### A histogram of the 20th day of the simulations
+```{r}
+hist(Option3[,n_days],25)
+```
+
+### Expected Result
+```{r}
+mean(Option3[,n_days])
+```
+- The expected return for the safe porfolio is $10,101.43 for  a $10,000 investment over four trading weeks or 1.01%
+
+### Five Percent at risk
+```{r}
+quantile(Option3[,n_days], 0.05)-10000
+```
+- The Five percent value at risk is $253.38
+
+## Decision Time:
+- Option 1: Spreading the investment equally. This option averaged a gain of $47.08 on a $10,000 investment over a four week period with a five percent value at risk of $412.32.
+- Option 2: The "aggressive" portfolio gained just $39.24 on the $10,000 investment with a five percent value at risk of $745.19.
+- Option 3: The "safe" portfolio appears to be the best investment, gaining $101.43 on the $10,000 investment while keeping a low five percent value at risk of $253.38.
+
+# Clustering and PCA
+
+## PCA
+```{r}
+set.seed(8)
+library(ggplot2)
+Wine <- read.csv("../data/wine.csv")
+attach(Wine)
+names(Wine)
+
+WineAttributes= Wine[,1:11]
+names(WineAttributes)
+
+pcWine=prcomp(WineAttributes,scale=TRUE)
+plot(pcWine)
+
+
+
+```
+
+This shows the variance accounted for by each of the principle components.
+### PCA plots
+```{r}
+loadings=pcWine$rotation
+scores = pcWine$x
+qplot(scores[,1], scores[,2], color=Wine$color, xlab='Component 1', ylab='Component 2')
+#This plot shows the first two principle components and how well they help differentiate the color of the wine
+qplot(scores[,1], fill=Wine$color, xlab='Component 1', ylab='Count')
+#This plot shows the first principle component and the differentiation of wine colors
+
+# This computes the variance of PCA
+pr.var=pcWine$sdev^2
+pve=pr.var/sum(pr.var)
+pve      
+```
+
+## Clustering
+```{r}
+set.seed(12)
+wine_scaled <- scale(WineAttributes, center=TRUE, scale=TRUE) 
+cluster_all <- kmeans(wine_scaled, centers=2, nstart=50)
+
+cluster_all$centers
+cluster_all$cluster
+
+#This plot shows the two cluster by their true colors. This helps understand which cluster projected either red or white wine.
+qplot(color,fill=factor(cluster_all$cluster),data= Wine )
+```
+
+````{r}
+t1 = table(Wine$color,cluster_all$cluster)
+t1
+
+````
+- This displays how well each cluster sorted wines by color using the K-means.
+
+```{r}
+p1=prop.table(t1,margin=1)
+p1
+
+
+```
+- This table shows the percent of the time each color was sorted into each cluster. 
+
+### Results
+- Clustering makes more sense in this situation and did a really good job accurately sorting each wine color into the proper cluster( over 98% accuracy). PCA takes a lot of components to explain an equal amount of variance, but that does not really reduct the dimentions. 
+- Clustering works because it is apparent that there is a difference in red and white wines that is very noticable by K-means. All the characteristics of the two wine types help create two distinct clusters of wine types with nearly 99% accuracy.
+
+## K-means to determine quality of the wines.
+```{r}
+set.seed(8)
+cluster_alled <- kmeans(wine_scaled,center=10,nstart=500)
+
+
+cluster_alled$centers
+cluster_alled$cluster
+
+#This plot shows the 10 clusters colored by expected quality score plotted on their actual score.
+qplot(quality,fill=factor(cluster_alled$cluster),data= Wine )
+```
+- KMeans does not accurately determine the quality of the wines. This may be because it does not take color of the wines into account and there may be different factors that determine the quality of white or red wine.
+
+# Market Segmentation
+```{r}
+set.seed(2)
+Tweet <- read.csv("../data/social_marketing.csv",header=TRUE)
+attach(Tweet)
+names(Tweet)
+head(Tweet)
+TweetCat <- Tweet[,2:37]
+TweetCat_scaled=scale(TweetCat, center=TRUE, scale=TRUE) 
+
+cluster_tweet <- kmeans(TweetCat_scaled, centers=12,nstart=50)
+
+names(cluster_tweet)
+
+cluster_tweet$cluster
+
+```
+- I segemented the audience into 12 clusters.
+
+## Looking at the clusters
+```{r}
+cluster_tweet$centers
+
+
+```
+- Each value is scaled to show how much a group tweets about a given topic in terms of standard deviations of the population. 
+
+- 1. Appears to be filled with chatter as well as photo_sharing and shopping
+- 2. Is not a particularly useful segment as the values are mostly in the negatives.
+- 3. Focuses on arts and crafts as well as small business. Perhaps these are people who create and sell their own art for a living?
+- 4. Tweets heavily about adult content.
+- 5. Tweets mostly about the news and cars as well as some politics.
+- 6. Tweets about fashion,cooking,beauty and photo_sharing. This is likely a predominantly female cluster, and due to the photo sharing I imagine probably girls in their late teens to  20's.
+- 7. Tweet primarily spam( 12.42 standard deviation), so these are likely the spambots.
+- 8. Tweets about computers, travel and politics.
+- 9. Tweets about watching sports, food, family, religion and school. Sounds like a sports writers demographic (besides school), where some tweet bible verses in the morning then anything else about their day. Often a lot of times that involves sports more than the rest of the population but not always.
+- 10. Tweet about colleges and playing sports. Perhaps these are the collegiate athletes?
+- 11. Tweet about school, business and fashion.
+- 12. Finally we have a group that tweets about the outdoors, personal fitness and fitness and health. This cluster likely frequents the gym and goes on plenty of hikes/runs. 
+
+### Examining the length of each cluster
+```{r}
+length(cluster_tweet$cluster)  #There are 7,882 users between the 12 clusters
+
+```
+
+
+```{r}
+length(which(cluster_tweet$cluster==1))
+
+```
+- Cluster 1 covers 936 users
+
+```{r}
+length(which(cluster_tweet$cluster==2))
+```
+- Cluster 2 covers 3,184 users
+
+```{r}
+length(which(cluster_tweet$cluster==3))
+```
+- Cluster 3 covers 403 users
+
+```{r}
+length(which(cluster_tweet$cluster==4))
+```
+- Cluster 4 covers 202 users
+
+```{r}
+length(which(cluster_tweet$cluster==5))
+```
+- Cluster 5 covers 417 users
+
+```{r}
+length(which(cluster_tweet$cluster==6))
+```
+- Cluster 6 covers 451 users
+
+```{r}
+length(which(cluster_tweet$cluster==7))
+```
+- Cluster 7 covers 49 users
+
+```{r}
+length(which(cluster_tweet$cluster==8))
+```
+- Cluster 8 covers 341 users
+
+```{r}
+length(which(cluster_tweet$cluster==9))
+```
+- Cluster 9 covers 641 users
+
+```{r}
+length(which(cluster_tweet$cluster==10))
+```
+- Cluster 10 covers 340 users
+
+```{r}
+length(which(cluster_tweet$cluster==11))
+```
+- Cluster 11 covers 191 users
+
+```{r}
+length(which(cluster_tweet$cluster==12))
+```
+- Cluster 12 cover 727 users.
+
+## Key takeaways:
+- 1. The largest group of users (cluster 2) is the one that is hardest to segment as their scores are predominantly negative.
+- 2. The next largest group is filled with chatter so not very helpful, however the third biggest segment are those who tweet about fitness/ health/ outdoors.
+- 3. People who watch sports make up another sizable proportion of users, followed by the female group.
